@@ -1,0 +1,135 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: reception-agent
+spec:
+  selector:
+    matchLabels:
+      app: reception-agent
+  template:
+    metadata:
+      labels:
+        app: reception-agent
+    spec:
+      containers:
+      - name: reception-agent
+        image: asia-southeast1-docker.pkg.dev/ict-gaistudio-prod-01/ai-voice-agent-repo/reception-agent:v2
+        envFrom:
+        - secretRef:
+            name: marketplace-agent-secrets
+        resources:
+          requests:
+            cpu: "4"
+            memory: "8Gi"
+            ephemeral-storage: "4Gi"
+      terminationGracePeriodSeconds: 900
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: reception-agent-scaler
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: reception-agent
+  minReplicas: 1
+  maxReplicas: 2
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 50
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: translator-agent
+spec:
+  selector:
+    matchLabels:
+      app: translator-agent
+  template:
+    metadata:
+      labels:
+        app: translator-agent
+    spec:
+      containers:
+      - name: translator-agent
+        image: asia-southeast1-docker.pkg.dev/ict-gaistudio-prod-01/ai-voice-agent-repo/translator-agent:v1
+        envFrom:
+        - secretRef:
+            name: marketplace-agent-secrets
+        resources:
+          requests:
+            cpu: "4"
+            memory: "8Gi"
+            ephemeral-storage: "4Gi"
+      terminationGracePeriodSeconds: 900
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: translator-agent-scaler
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: translator-agent
+  minReplicas: 1
+  maxReplicas: 2
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 50
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gemini-bridge
+spec:
+  selector:
+    matchLabels:
+      app: gemini-bridge
+  template:
+    metadata:
+      labels:
+        app: gemini-bridge
+    spec:
+      containers:
+      - name: gemini-bridge
+        image: asia-southeast1-docker.pkg.dev/ict-gaistudio-prod-01/ai-voice-agent-repo/reception-agent:v2
+        command: ["uv", "run", "src/bridge_agent.py", "start"]
+        envFrom:
+        - secretRef:
+            name: marketplace-agent-secrets
+        resources:
+          requests:
+            cpu: "4"
+            memory: "8Gi"
+            ephemeral-storage: "4Gi"
+      terminationGracePeriodSeconds: 900
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: gemini-bridge-scaler
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: gemini-bridge
+  minReplicas: 1
+  maxReplicas: 2
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 50
