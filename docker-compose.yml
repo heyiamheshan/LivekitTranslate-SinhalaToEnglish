@@ -1,0 +1,17 @@
+services:
+  reception-agent:
+    build:
+      context: ./reception-agent
+      dockerfile: Dockerfile
+    env_file:
+      - .env.local
+    restart: unless-stopped
+
+  bridge-agent:
+    build:
+      context: ./reception-agent
+      dockerfile: Dockerfile
+    command: ["uv", "run", "src/bridge_agent.py", "start"]
+    env_file:
+      - .env.local
+    restart: unless-stopped

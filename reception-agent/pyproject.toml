@@ -1,0 +1,10 @@
+[project]
+name = "reception-agent"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "livekit-agents[inference]>=1.5",
+    "livekit>=1.0",
+    "python-dotenv",
+    "websockets>=12.0",
+]
