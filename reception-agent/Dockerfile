@@ -3,4 +3,4 @@ WORKDIR /app
 COPY pyproject.toml ./
 RUN uv sync --no-install-project
 COPY src/ ./src/
-CMD ["sh", "-c", "uv run src/agent.py start --port ${PORT:-8081}"]
+CMD ["uv", "run", "src/agent.py", "start"]
