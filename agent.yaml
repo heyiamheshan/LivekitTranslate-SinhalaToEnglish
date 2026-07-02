@@ -13,7 +13,7 @@ spec:
     spec:
       containers:
       - name: reception-agent
-        image: asia-southeast1-docker.pkg.dev/ict-gaistudio-prod-01/ai-voice-agent-repo/reception-agent:v2
+        image: asia-southeast1-docker.pkg.dev/ict-gaistudio-prod-01/ai-voice-agent-repo/reception-agent:v3
         envFrom:
         - secretRef:
             name: marketplace-agent-secrets
@@ -103,7 +103,7 @@ spec:
     spec:
       containers:
       - name: gemini-bridge
-        image: asia-southeast1-docker.pkg.dev/ict-gaistudio-prod-01/ai-voice-agent-repo/reception-agent:v2
+        image: asia-southeast1-docker.pkg.dev/ict-gaistudio-prod-01/ai-voice-agent-repo/reception-agent:v3
         command: ["uv", "run", "src/bridge_agent.py", "start"]
         envFrom:
         - secretRef:
