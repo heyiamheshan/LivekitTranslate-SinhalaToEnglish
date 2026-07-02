@@ -302,21 +302,44 @@ async def run_bridge(si_room: rtc.Room, en_room_name: str) -> None:
     await en_to_si.start()
     log.info("Bridge bidirectional translation active")
 
+    # Event-driven call linking: when either party hangs up, end both calls.
+    call_ended = asyncio.Event()
+
+    @si_room.on("participant_disconnected")
+    def _si_hung_up(participant: rtc.RemoteParticipant) -> None:
+        if participant.identity == si_identity:
+            log.info("Sinhala caller (%s) hung up", si_identity)
+            call_ended.set()
+
+    @en_room.on("participant_disconnected")
+    def _en_hung_up(participant: rtc.RemoteParticipant) -> None:
+        if participant.identity == en_identity:
+            log.info("English caller (%s) hung up", en_identity)
+            call_ended.set()
+
+    lk = api.LiveKitAPI(
+        url=lk_url,
+        api_key=api_key_val,
+        api_secret=api_secret_val,
+    )
+
     try:
-        while True:
-            await asyncio.sleep(5)
-            si_active = any(
-                p.kind == rtc.ParticipantKind.PARTICIPANT_KIND_SIP
-                for p in si_room.remote_participants.values()
+        await call_ended.wait()
+
+        # Hang up whichever caller is still on the line
+        if si_identity in si_room.remote_participants:
+            log.info("Hanging up Sinhala caller %s", si_identity)
+            await lk.room.remove_participant(
+                api.RemoveParticipantRequest(room=si_room.name, identity=si_identity)
             )
-            en_active = any(
-                p.kind == rtc.ParticipantKind.PARTICIPANT_KIND_SIP
-                for p in en_room.remote_participants.values()
+        if en_identity in en_room.remote_participants:
+            log.info("Hanging up English caller %s", en_identity)
+            await lk.room.remove_participant(
+                api.RemoveParticipantRequest(room=en_room_name, identity=en_identity)
             )
-            if not si_active and not en_active:
-                log.info("Both callers disconnected — shutting down bridge")
-                break
+
     finally:
+        await lk.aclose()
         await si_to_en.aclose()
         await en_to_si.aclose()
         await en_room.disconnect()
