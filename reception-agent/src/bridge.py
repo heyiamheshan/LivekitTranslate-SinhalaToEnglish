@@ -126,7 +126,7 @@ class CrossRoomTranslator:
     async def _pump(self, speaker_track: rtc.RemoteAudioTrack) -> None:
         model = os.getenv("GEMINI_MODEL", "gemini-3.5-live-translate-preview")
         url = f"{GEMINI_WS_URL}?key={self._api_key}"
-        async with websockets.connect(url, max_size=2**22, ping_interval=20, ping_timeout=20) as ws:
+        async with websockets.connect(url, max_size=2**22, ping_interval=60, ping_timeout=30) as ws:
             await ws.send(json.dumps({
                 "setup": {
                     "model": f"models/{model}",
@@ -136,9 +136,14 @@ class CrossRoomTranslator:
                             "targetLanguageCode": self._target_lang,
                             "echoTargetLanguage": True,
                         },
+                        "speechConfig": {
+                            "voiceConfig": {
+                                "prebuiltVoiceConfig": {"voiceName": "Aoede"}
+                            }
+                        },
                     },
                     "realtimeInputConfig": {
-                        "automaticActivityDetection": {"disabled": False},
+                        "automaticActivityDetection": {"disabled": True},
                     },
                 }
             }))
@@ -162,23 +167,35 @@ class CrossRoomTranslator:
     ) -> None:
         await ready.wait()
         stream = rtc.AudioStream(track, sample_rate=GEMINI_INPUT_SAMPLE_RATE, num_channels=1)
-        sent = 0
+        # batch ~100ms of audio before sending to reduce WebSocket overhead
+        BATCH_SAMPLES = GEMINI_INPUT_SAMPLE_RATE // 10  # 1600 samples = 100ms
         mime = f"audio/pcm;rate={GEMINI_INPUT_SAMPLE_RATE}"
+        accumulated = bytearray()
+        sent = 0
         try:
             async for ev in stream:
                 if self._closed.is_set():
                     return
-                b64 = base64.b64encode(bytes(ev.frame.data)).decode("ascii")
+                accumulated.extend(bytes(ev.frame.data))
+                if len(accumulated) >= BATCH_SAMPLES * 2:  # *2 for 16-bit samples
+                    b64 = base64.b64encode(bytes(accumulated)).decode("ascii")
+                    await ws.send(json.dumps({
+                        "realtimeInput": {"audio": {"mimeType": mime, "data": b64}}
+                    }))
+                    accumulated.clear()
+                    sent += 1
+                    if sent in (1, 10) or sent % 100 == 0:
+                        log.info(
+                            "Bridge →Gemini: %d batches %s→%s",
+                            sent, self._speaker_identity, self._target_lang,
+                        )
+        finally:
+            # flush any remaining audio
+            if accumulated and not self._closed.is_set():
+                b64 = base64.b64encode(bytes(accumulated)).decode("ascii")
                 await ws.send(json.dumps({
                     "realtimeInput": {"audio": {"mimeType": mime, "data": b64}}
                 }))
-                sent += 1
-                if sent in (1, 50) or sent % 500 == 0:
-                    log.info(
-                        "Bridge →Gemini: %d frames %s→%s",
-                        sent, self._speaker_identity, self._target_lang,
-                    )
-        finally:
             await stream.aclose()
 
     async def _recv(
@@ -251,28 +268,44 @@ async def run_bridge(si_room: rtc.Room, en_room_name: str) -> None:
     await en_room.connect(lk_url, token)
     log.info("Bridge joined Room B: %s", en_room_name)
 
-    # Wait for SIP participants to appear in both rooms
+    # Wait for SIP participants to appear in both rooms (event-driven)
     si_identity: str | None = None
     en_identity: str | None = None
+    both_found = asyncio.Event()
 
-    for _ in range(30):
-        await asyncio.sleep(1)
-        if not si_identity:
-            for p in si_room.remote_participants.values():
-                if p.kind == rtc.ParticipantKind.PARTICIPANT_KIND_SIP:
-                    si_identity = p.identity
-                    break
-        if not en_identity:
-            for p in en_room.remote_participants.values():
-                if p.kind == rtc.ParticipantKind.PARTICIPANT_KIND_SIP:
-                    en_identity = p.identity
-                    break
-        if si_identity and en_identity:
+    for p in si_room.remote_participants.values():
+        if p.kind == rtc.ParticipantKind.PARTICIPANT_KIND_SIP:
+            si_identity = p.identity
+            break
+    for p in en_room.remote_participants.values():
+        if p.kind == rtc.ParticipantKind.PARTICIPANT_KIND_SIP:
+            en_identity = p.identity
             break
 
-    if not si_identity or not en_identity:
+    if si_identity and en_identity:
+        both_found.set()
+
+    @si_room.on("participant_connected")
+    def _si_joined(participant: rtc.RemoteParticipant) -> None:
+        nonlocal si_identity
+        if participant.kind == rtc.ParticipantKind.PARTICIPANT_KIND_SIP:
+            si_identity = participant.identity
+            if en_identity:
+                both_found.set()
+
+    @en_room.on("participant_connected")
+    def _en_joined(participant: rtc.RemoteParticipant) -> None:
+        nonlocal en_identity
+        if participant.kind == rtc.ParticipantKind.PARTICIPANT_KIND_SIP:
+            en_identity = participant.identity
+            if si_identity:
+                both_found.set()
+
+    try:
+        await asyncio.wait_for(both_found.wait(), timeout=15.0)
+    except asyncio.TimeoutError:
         log.error(
-            "SIP participants not found — si=%s en=%s; aborting bridge",
+            "SIP participants not found within 15s — si=%s en=%s; aborting bridge",
             si_identity, en_identity,
         )
         await en_room.disconnect()
